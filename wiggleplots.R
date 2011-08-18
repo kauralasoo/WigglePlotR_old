@@ -1,6 +1,70 @@
 #Load functions from functions file
 source('/Users/alasoo/workspace/WigglePlotR/functions.R')
 
+#Define a class to store transcript infromation
+setClass("Transcript", representation(
+				name = "character",
+				txStart = "numeric",
+				txEnd = "numeric",
+				cdsStart = "numeric",
+				cdsEnd = "numeric",
+				exonCount = "numeric",
+				exonStarts = "numeric",
+				exonEnds = "numeric",
+				cdsStartExon = "numeric",
+				cdsEndExon = "numeric",
+				strand = "character",
+				chrom = "character")
+)
+
+#Define a constructor for the class that loads tanscript information from a BED file
+setGeneric("Transcript", function(bed.record) standardGeneric("Transcript"))
+setMethod("Transcript", signature(bed.record = "data.frame"), function(bed.record){
+			#Calculate values based on the bed record
+			exonStarts <- as.integer(strsplit(bed.record$exonStarts, ",")[[1]])+bed.record$txStart+1
+			exonEnds <- as.integer(strsplit(bed.record$exonSizes, ",")[[1]])+exonStarts
+			cdsStartExon <- findInterval(bed.record$cdsStart+1, exonStarts)
+			cdsEndExon <- findInterval(bed.record$cdsEnd, exonStarts)
+
+			transcript = new("Transcript")
+			transcript@name = bed.record$name
+			transcript@strand = bed.record$strand
+			transcript@txStart = bed.record$txStart
+			transcript@txEnd = bed.record$txEnd
+			transcript@cdsStart = bed.record$cdsStart
+			transcript@cdsEnd = bed.record$cdsEnd
+			transcript@exonStarts = exonStarts
+			transcript@exonEnds = exonEnds
+			transcript@cdsStartExon = cdsStartExon
+			transcript@cdsEndExon = cdsEndExon
+			transcript@exonCount = bed.record$exonCount
+			transcript@chrom = bed.record$chrom
+			return(transcript)
+		})
+
+ReadTranscriptsFromBed <- function(transcript.ids, bed.file){
+	transcript.list = list()
+	i = 1
+	for (transcript.id in transcript.ids){
+		bed.record = subset(bed.file, name == transcript.id)
+		#Skip transcript if it's not found in the BED file.
+		if (nrow(bed.record) == 0){
+			print(paste("ERROR: Transcript", transcript.id , "has no record in the BED file. Skipping.", sep = " "))
+			next
+		}
+		#If there are multiple rows (same transcript on different strands), then take the first one.
+		if (nrow(bed.record) > 1){
+			print(paste("ERROR: Transcript", transcript.id, "has more than one record in BED file. Selecting first.", sep = " "))
+			bed.record = bed.record[1,]	
+		}
+		transcript = Transcript(bed.record)
+		transcript.list[[i]] = transcript
+		i = i + 1
+	}
+	return(transcript.list)
+}
+
+
 wiggleplots <- function(primaryTranscript, otherTranscripts, bamfiles, bedfile, total.reads=NULL,
 		exon.colors="black", intron.color="lightgray", bg.colors="transparent") {
 	
@@ -75,6 +139,7 @@ wiggleplots <- function(primaryTranscript, otherTranscripts, bamfiles, bedfile, 
 		print(paste("ERROR: Primary transcript", primaryTranscript, "has more than one record in BED file. Selecting first.", sep = " "))
 		primaryBed = primaryBed[1,]	
 	}
+	primaryTranscriptObject = Transcript(bed.record = primaryBed)
 	chrom <- primaryBed$chrom
 	strand <- primaryBed$strand
 	
@@ -85,6 +150,9 @@ wiggleplots <- function(primaryTranscript, otherTranscripts, bamfiles, bedfile, 
 			otherTranscripts = otherTranscripts[-which(otherTranscripts == transcript_id)] #Remove if not in bed file
 		}			
 	}
+	
+	transcript.list = ReadTranscriptsFromBed(c(primaryTranscript, otherTranscripts), bed)
+	print(transcript.list)
 	
 	### EXTRACT PROPTERTIES OF THE LONGEST TRANSCRIPT ###
 	fullGeneModel <- CreateFullGeneModel(c(primaryTranscript,otherTranscripts), bed)
@@ -116,7 +184,7 @@ wiggleplots <- function(primaryTranscript, otherTranscripts, bamfiles, bedfile, 
 	InitializeExonStructurePlot(start.pos, end.pos)
 	
 	#Draw exon structures of the primary transcript
-	DrawExonStructure(primaryBed, "black", start.pos)
+	DrawExonStructure(primaryTranscriptObject, "black", start.pos)
 	#Draw unique exons of the primary transcript
 	DrawUniqueExons(primaryTranscript, otherTranscripts, bed)
 	
@@ -127,7 +195,8 @@ wiggleplots <- function(primaryTranscript, otherTranscripts, bamfiles, bedfile, 
 	for (id in otherTranscripts){
 		InitializeExonStructurePlot(start.pos, end.pos)
 		secondaryBed = subset(bed, name == id)
-		DrawExonStructure(secondaryBed, "black", start.pos)
+		transcript = Transcript(bed.record = secondaryBed)
+		DrawExonStructure(transcript, "black", start.pos)
 	}
 }   
 
@@ -139,6 +208,6 @@ bamfiles = c("/Users/alasoo/projects/Tripathi/alignments/ThP/ThP.shrimp.final.so
 		"/Users/alasoo/projects/Tripathi/alignments/Th0/Th0.shrimp.final.sorted.bam")
 names(bamfiles) = c("ThP", "Th0")
 bedfile = read.bedfile("/Users/alasoo/projects/Tripathi/annotations/refGene/refGene.hg18.270711.bed")
-wiggleplots(primary_tx, other_tx, bamfiles, bedfile)
+record = wiggleplots(primary_tx, other_tx, bamfiles, bedfile)
 
 

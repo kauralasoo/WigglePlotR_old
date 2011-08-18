@@ -39,30 +39,25 @@ read.bedfile <- function (bedfile) {
 	return(bed);
 }
 
-DrawChevrons <- function(start.pos, end.pos, exonStarts, exonEnds, exonCount, strand){
+DrawChevrons <- function(transcript){
 	# Function for drawing chevrons on the wiggle plot that show transcription direction.
 	#
 	# INPUT:
-	# start.pos		start position of the transcript
-	# end.pos		end position of the transcript
-	# exonStarts	start coordinates of all exons
-	# exonEnds		end coordinates of all exons
-	# econCount		the total number of exons in transcript
-	# strand		the strand of the transcript
+	# transcript	Object of the class "Transcript"
 	
 	# OUTPUT
 	# Add chevrons to the gene structure plot
 	
 	chevron.intervals <- 50;
-	x <- seq(start.pos, end.pos, length.out=chevron.intervals+1)[2:chevron.intervals];
+	x <- seq(transcript@txStart, transcript@txEnd, length.out=chevron.intervals+1)[2:chevron.intervals];
 	width <- diff(x)[1] * 0.25;
 	height <- 0.2;
-	direction <- c("-"=-1, "+"=1)[strand];
+	direction <- c("-"=-1, "+"=1)[transcript@strand];
 	chevron.starts <- pmin(x, x-width*direction);
 	chevron.ends <- pmax(x, x-width*direction);
 	# If there are introns, draw chevrons there; if not, draw them in white on the exon
-	if (exonCount > 1) {
-		x <- x[!mapply(function(starts, ends) any((starts < exonEnds) & (ends > exonStarts)), chevron.starts, chevron.ends)];
+	if (transcript@exonCount > 1) {
+		x <- x[!mapply(function(starts, ends) any((starts < transcript@exonEnds) & (ends > transcript@exonStarts)), chevron.starts, chevron.ends)];
 		chevron.col <- "black";
 	} else {
 		chevron.col <- "white";
@@ -74,62 +69,49 @@ DrawChevrons <- function(start.pos, end.pos, exonStarts, exonEnds, exonCount, st
 	}
 }
 
-DrawExonStructure <- function(bed.record, color, start.pos){
+DrawExonStructure <- function(transcript, color, start.pos){
 	# Function to draw the exon structure for single transcripts
 	
 	# INPUT
-	# bed.record	the description of the transcript on bed format 
+	# transcript	Object of the class "Transcript"
 	# color			color of the exons
 	
 	# OUTPUT
 	# Add exons from one trancript to the gene structure plot
 	
-	# Extract variables from bed record for convenience
-	txStart <- bed.record$txStart;
-	txEnd <- bed.record$txEnd;
-	cdsStart <- bed.record$cdsStart;
-	cdsEnd <- bed.record$cdsEnd;
-	exonCount <- bed.record$exonCount;
-	
-	# Extract start positions of exons and CDS, converting from 0-based starts to 1-based starts
-	exonStarts <- as.integer(strsplit(bed.record$exonStarts, ",")[[1]])+txStart+1;
-	exonEnds <- as.integer(strsplit(bed.record$exonSizes, ",")[[1]])+exonStarts;
-	cdsStartExon <- findInterval(cdsStart+1, exonStarts);
-	cdsEndExon <- findInterval(cdsEnd, exonStarts);
-	
 	# Draw a line across the transcription unit
-	lines(x=c(txStart+1, txEnd), y=c(0,0));
+	lines(x=c(transcript@txStart+1, transcript@txEnd), y=c(0,0));
 	# Draw any exons before the coding sequence
 	i <- 1;
-	while (i < cdsStartExon) {
-		rect(xleft=exonStarts[i], xright=exonEnds[i], ybottom=-0.5, ytop=0.5, col=color, border = NA);
-		if (i < exonCount) i <- i + 1;
+	while (i < transcript@cdsStartExon) {
+		rect(xleft=transcript@exonStarts[i], xright=transcript@exonEnds[i], ybottom=-0.5, ytop=0.5, col=color, border = NA);
+		if (i < transcript@exonCount) i <- i + 1;
 	}
 	# Draw the exon that intersects with the start of the coding sequence
-	rect(xleft=exonStarts[i], xright=cdsStart+1, ybottom=-0.5, ytop=0.5, col=color, border = NA);
+	rect(xleft=transcript@exonStarts[i], xright=transcript@cdsStart+1, ybottom=-0.5, ytop=0.5, col=color, border = NA);
 	# This line checks to see if the CDS ends before the exon does (in case CDS is in one exon)
-	rect(xleft=cdsStart+1, xright=min(cdsEnd, exonEnds[i]), ybottom=-0.75, ytop=0.75, col=color, border = NA);
-	if (i < exonCount) i <- i + 1;
+	rect(xleft=transcript@cdsStart+1, xright=min(transcript@cdsEnd, transcript@exonEnds[i]), ybottom=-0.75, ytop=0.75, col=color, border = NA);
+	if (i < transcript@exonCount) i <- i + 1;
 	# Draw the exons that overlap completely with the coding sequence
-	while (i < cdsEndExon) {
-		rect(xleft=exonStarts[i], xright=exonEnds[i], ybottom=-0.75, ytop=0.75, col=color, border = NA);
-		if (i < exonCount) i <- i + 1;
+	while (i < transcript@cdsEndExon) {
+		rect(xleft=transcript@exonStarts[i], xright=transcript@exonEnds[i], ybottom=-0.75, ytop=0.75, col=color, border = NA);
+		if (i < transcript@exonCount) i <- i + 1;
 	}
 	# Draw the exon that intersects with the end of the coding sequence
-	rect(xleft=max(cdsStart, exonStarts[i]), xright=cdsEnd, ybottom=-0.75, ytop=0.75, col=color, border = NA);
-	rect(xleft=cdsEnd, xright=exonEnds[i], ybottom=-0.5, ytop=0.5, col=color, border = NA);
-	if (i < exonCount) i <- i + 1;
+	rect(xleft=max(transcript@cdsStart, transcript@exonStarts[i]), xright=transcript@cdsEnd, ybottom=-0.75, ytop=0.75, col=color, border = NA);
+	rect(xleft=transcript@cdsEnd, xright=transcript@exonEnds[i], ybottom=-0.5, ytop=0.5, col=color, border = NA);
+	if (i < transcript@exonCount) i <- i + 1;
 	# Draw any exons after the coding sequence
-	while (i <= exonCount) {
-		rect(xleft=exonStarts[i], xright=exonEnds[i], ybottom=-0.5, ytop=0.5, col=color, border = NA);
+	while (i <= transcript@exonCount) {
+		rect(xleft=transcript@exonStarts[i], xright=transcript@exonEnds[i], ybottom=-0.5, ytop=0.5, col=color, border = NA);
 		i <- i + 1;
 	}
 
 	#Add name
-	text(x = start.pos, y = -1, bed.record$name, cex = 2, pos = 4)
+	text(x = start.pos, y = -1, transcript@name, cex = 2, pos = 4)
 	
 	#Draw chevrons
-	DrawChevrons(txStart, txEnd, exonStarts, exonEnds, exonCount, bed.record$strand)
+	DrawChevrons(transcript)
 }
 
 InitializeExonStructurePlot <- function(start.pos, end.pos){
