@@ -29,9 +29,9 @@ setMethod("Transcript", signature(bed.record = "data.frame"), function(bed.recor
 			transcript = new("Transcript")
 			transcript@name = bed.record$name
 			transcript@strand = bed.record$strand
-			transcript@txStart = bed.record$txStart
+			transcript@txStart = bed.record$txStart + 1
 			transcript@txEnd = bed.record$txEnd
-			transcript@cdsStart = bed.record$cdsStart
+			transcript@cdsStart = bed.record$cdsStart + 1
 			transcript@cdsEnd = bed.record$cdsEnd
 			transcript@exonStarts = exonStarts
 			transcript@exonEnds = exonEnds
@@ -64,6 +64,188 @@ ReadTranscriptsFromBed <- function(transcript.ids, bed.file){
 	return(transcript.list)
 }
 
+CreateFullGeneModel <- function(transcript.list){
+	# Function to create the full gene model from the transcripts.
+	
+	# INPUT
+	# transcript.list	list of all transcript objects.
+	
+	# OUTPUT
+	# full.gene.model	Object of class "Transcript" specifying the full gene model.
+	
+	#Define variables
+	startPositions = list()
+	endPositions = list()
+	exonStarts = c()
+	exonEnds = c()
+	strand = NULL
+	chrom = NULL
+	
+	i = 1
+	for (transcript in transcript.list){
+		startPositions = append(startPositions, transcript@txStart)
+		endPositions = append(endPositions, transcript@txEnd)
+		
+		if (i == 1){  #Copy most of the infromation from the first transcript
+			exonStarts <- transcript@exonStarts
+			exonEnds <- transcript@exonEnds
+			strand <- transcript@strand
+			chrom <- transcript@chrom
+			i = 2
+		}
+		else{  #Add unique exons from the other transcripts
+			newStarts <- transcript@exonStarts
+			newEnds <- transcript@exonEnds
+			newStartIndices <- c(1:length(newStarts))[newStarts %in% exonStarts == FALSE]
+			newEndIndices <- c(1:length(newStarts))[newStarts %in% exonStarts == FALSE]
+			newExons = unique(c(newStartIndices, newEndIndices))
+			exonStarts = c(exonStarts, newStarts[newExons])
+			exonEnds = c(exonEnds, newEnds[newExons])	
+		}		
+	}
+	
+	txStart = min(unlist(startPositions))
+	txEnd = max(unlist(endPositions))
+	exonCount = length(exonStarts)
+	
+	full.gene.model = new("Transcript", txStart = txStart, txEnd = txEnd,
+			exonStarts = exonStarts, exonEnds = exonEnds, exonCount = exonCount,
+			strand = strand, chrom = chrom, name = "All exons")
+	return(full.gene.model)
+}
+
+CreatePileups <- function(full.gene.model, bamfiles, total.reads){
+	#Function to retrieve reads from BAM files and create pileups.
+	
+	# INPUT
+	# full.gene.model	Transcript object specifying the full gene model.
+	# bamfiles		list of BAM files to be analyzed
+	# total.reads	vector of total number of reads per each BAM file
+	
+	# OUTPUT
+	# list(reads = reads, counts = counts) - List of two lists, showing the reads
+	#										and read counts from each BAM files.
+	
+	start.pos = full.gene.model@txStart
+	end.pos = full.gene.model@txEnd
+	chrom = full.gene.model@chrom
+	
+	n <- length(bamfiles);
+	reads <- list();
+	counts <- list();
+	for (i in 1:n) {
+		# Prepare a parameter object to look for any alignments falling within the given range
+		param <- ScanBamParam(which=GRanges(seqnames=Rle(chrom),
+							ranges=IRanges(start.pos, end.pos)),
+							what=c("qwidth","pos"));
+		# Retrieve the positions of all alignments falling within the given range
+		reads[[i]] <- scanBam(bamfiles[i], param=param)[[1]];
+		# Perform a pileup of the alignments
+		if (length(reads[[i]]$pos)) {
+			coordinates <- reads[[i]]$pos - reads[[i]]$pos[1] + 1;
+			counts[[i]] <- rep(as.integer(0), length=max(coordinates)+33);
+			for (j in 1:length(coordinates)) {
+				start <- coordinates[j];
+				end <- start + reads[[i]]$qwidth[j] - 1;
+				counts[[i]][start:end] <- counts[[i]][start:end] + 1;
+			}
+		} else {
+			counts[[i]] <- integer(0);
+		}
+	}
+	
+	# If total reads were requested, normalize all counts to million reads per sample
+	if (!is.null(total.reads)) {
+		for (i in 1:n) {
+			counts[[i]] <- counts[[i]] / (total.reads[i] / 1E6);
+		}
+	}
+	
+	return(list(reads = reads, counts = counts))
+}
+
+DrawWigglePlots <- function(full.gene.model, pileups, total.reads, sample.names, bg.colors, intron.color, exon.colors){
+	
+	reads = pileups$reads
+	counts = pileups$counts
+	n <- length(counts)
+	exonPositions <- unlist(mapply(seq, full.gene.model@exonStarts, 
+					full.gene.model@exonEnds, SIMPLIFY=FALSE));
+	
+	# Get the maximum across all counts and all samples
+	min.counts <- Inf;
+	max.counts <- 0;
+	for (i in 1:n) {
+		nonzero <- which(counts[[i]] > 0);
+		first.read <- reads[[i]]$pos[1];
+		nonzero.exonic <- intersect(nonzero, exonPositions-first.read+1);
+		max.counts <- max(max.counts, max(counts[[i]][nonzero.exonic]));
+		min.counts <- min(min.counts, min(counts[[i]][nonzero]));
+	}
+	
+	par(mar=c(0.5,5,0.5,1));
+	for (i in 1:n) {
+		# Set up each plot, scaled to the maximum count across all samples
+		#ylab <- sprintf("%s%s", sample.names[i], ifelse(!is.null(total.reads), "\nRPKM", "\nreads"));
+		ylab <- sprintf("%s", sample.names[i]);
+		plot(x=NA, y=NA, xaxt="n", xlab=NA, ylab=ylab, cex.axis=2, cex.lab = 2, 
+				xlim=c(full.gene.model@txStart, full.gene.model@txEnd), ylim=c(0, max.counts));
+		# Draw a background over just the plotting area
+		rect(xleft=par("usr")[1], xright=par("usr")[2], ybottom=par("usr")[3], ytop=par("usr")[4], col=bg.colors[i]);
+		# If there are counts, plot them as individual line segments
+		nonzero <- which(counts[[i]] > 0);
+		first.read <- reads[[i]]$pos[1];
+		nonzero.exonic <- intersect(nonzero, exonPositions-first.read+1);
+		nonzero.intronic <- setdiff(nonzero, exonPositions-first.read+1);
+		if (length(nonzero.intronic)) {
+			segments(x0=first.read+nonzero.intronic-1, x1=first.read+nonzero.intronic-1,
+					y0=0, y1=counts[[i]][nonzero.intronic],
+					col=intron.color);
+		}
+		if (length(nonzero.exonic)) {
+			segments(x0=first.read+nonzero.exonic-1, x1=first.read+nonzero.exonic-1,
+					y0=0, y1=counts[[i]][nonzero.exonic],
+					col=exon.colors[i]);
+		}
+	}
+}
+
+DrawUniqueExons <- function(transcript.list){
+	#Plot a red rectangle under unique exons of the first transcript.
+	#
+	# INPUT
+	# transcript.list	list of all Transcript objects
+	
+	#Extract information about primary transcript
+	primaryExonStarts <- transcript.list[[1]]@exonStarts
+	primaryExonEnds <- transcript.list[[1]]@exonEnds
+	
+	uniqueStartIndices <- c(1:length(primaryExonStarts))
+	uniqueEndIndices <- c(1:length(primaryExonEnds))
+	
+	#Go through all other transcripts
+	for (i in 2:length(transcript.list)){
+		newStarts <- transcript.list[[i]]@exonStarts
+		newEnds <- transcript.list[[i]]@exonEnds
+				
+		newStartIndices <- c(1:length(primaryExonStarts))[primaryExonStarts %in% newStarts == FALSE]
+		newEndIndices <- c(1:length(primaryExonEnds))[primaryExonEnds %in% newEnds == FALSE]
+		
+		uniqueStartIndices <- intersect(uniqueStartIndices, newStartIndices)
+		uniqueEndIndices <- intersect(uniqueEndIndices, newEndIndices)
+	}
+	
+	uniqueIndices = unique(c(uniqueStartIndices,uniqueEndIndices))
+	exonStarts <- primaryExonStarts[uniqueIndices]
+	exonEnds <- primaryExonEnds[uniqueIndices]
+	
+	#Mark unique exons with rectangles
+	if (length(exonStarts) > 0){
+		for (i in c(1:length(exonStarts))){
+			rect(xleft=exonStarts[i], xright=exonEnds[i], ybottom=-1, ytop=-0.77, col="red", border = NA);
+		}		
+	}	
+}
 
 wiggleplots <- function(primaryTranscript, otherTranscripts, bamfiles, bedfile, total.reads=NULL,
 		exon.colors="black", intron.color="lightgray", bg.colors="transparent") {
@@ -129,74 +311,36 @@ wiggleplots <- function(primaryTranscript, otherTranscripts, bamfiles, bedfile, 
 	if (length(exon.colors) == 1) exon.colors <- rep(exon.colors, n);
 	if (length(bg.colors) == 1) bg.colors <- rep(bg.colors, n);
 	
-	# Obtain the record from the BED file corresponding to the primary transcript
-	primaryBed <- subset(bed, name == primaryTranscript)
-	if (nrow(primaryBed) == 0){
-		print(paste("ERROR: Primary transcript", primaryTranscript, "has no record in the BED file. Skipping.", sep = " "))
-		return()
-	}
-	else if (nrow(primaryBed) > 1){
-		print(paste("ERROR: Primary transcript", primaryTranscript, "has more than one record in BED file. Selecting first.", sep = " "))
-		primaryBed = primaryBed[1,]	
-	}
-	primaryTranscriptObject = Transcript(bed.record = primaryBed)
-	chrom <- primaryBed$chrom
-	strand <- primaryBed$strand
-	
-	#Check if other transcripts acutally exist in the BED file:
-	for (transcript_id in otherTranscripts){
-		bed.record = subset(bed, name == transcript_id)
-		if (nrow(bed.record) == 0){
-			otherTranscripts = otherTranscripts[-which(otherTranscripts == transcript_id)] #Remove if not in bed file
-		}			
-	}
-	
-	transcript.list = ReadTranscriptsFromBed(c(primaryTranscript, otherTranscripts), bed)
-	print(transcript.list)
-	
-	### EXTRACT PROPTERTIES OF THE LONGEST TRANSCRIPT ###
-	fullGeneModel <- CreateFullGeneModel(c(primaryTranscript,otherTranscripts), bed)
-	start.pos <- fullGeneModel$start.pos
-	end.pos <- fullGeneModel$end.pos
-	exonCount <- fullGeneModel$exonCount
-	exonStarts <- fullGeneModel$exonStarts
-	exonEnds <- fullGeneModel$exonEnds
+	#Read all transcripts from the BED file
+	transcript.list = ReadTranscriptsFromBed(c(primaryTranscript, otherTranscripts), bed)	
+	#Create full gene model (contains all exons)
+	full.gene.model = CreateFullGeneModel(transcript.list)
 	
 	### Retrieve alignments and create pileups ###
 	cat("Retrieving alignments and creating pileups.\n");
-	pileups = CreatePileups(start.pos, end.pos, chrom, bamfiles, total.reads)
+	pileups = CreatePileups(full.gene.model, bamfiles, total.reads)
 	
-	# Layout has n+2 rows: one for each sample, plus 1 title row and 1 annotation row
+	# Create the plot layout
 	layout(matrix(1:(n+m+1),n+m+1,1), heights = c(rep(2,n),rep(1,m)));
 	par(mar=c(2,50,2,1), bg="transparent");
-	# Write the title bar
-	#frame();
-	#with(primaryBed, {
-	#			text(x=0.5, y=0.5,
-	#					#sprintf("%s\n(%s:%s-%s)", primaryTranscript, chrom, format(start.pos, big.mark=","), format(end.pos, big.mark=",")), cex=2);
-	#					sprintf("%s", primaryTranscript, format(end.pos, big.mark=",")), cex=1);
-	#		});
 	
 	##### DRAW WIGGLE PLOTS #####
-	DrawWigglePlots(start.pos, end.pos, exonStarts, exonEnds, pileups, total.reads, sample.names, bg.colors, intron.color, exon.colors)
+	DrawWigglePlots(full.gene.model, pileups, total.reads, sample.names, bg.colors, intron.color, exon.colors)
 	
-	##### DRAW EXON STRUCTURE OF TRANSCRIPT #####
-	InitializeExonStructurePlot(start.pos, end.pos)
-	
-	#Draw exon structures of the primary transcript
-	DrawExonStructure(primaryTranscriptObject, "black", start.pos)
-	#Draw unique exons of the primary transcript
-	DrawUniqueExons(primaryTranscript, otherTranscripts, bed)
-	
-	# Draw chevrons to show direction of transcription
-	#DrawChevrons(start.pos, end.pos, exonStarts, exonEnds, exonCount, strand)
-	
-	#Draw exon structures of other transcripts
-	for (id in otherTranscripts){
-		InitializeExonStructurePlot(start.pos, end.pos)
-		secondaryBed = subset(bed, name == id)
-		transcript = Transcript(bed.record = secondaryBed)
-		DrawExonStructure(transcript, "black", start.pos)
+	##### ADD EXON STRUCTURES #####
+	i <- 1
+	for (transcript in transcript.list){
+		#Initialize plot and draw exon structure
+		par(mar=c(0.5,5,0.5,1))
+		plot(x=NULL, y=NULL, yaxt="n", xaxt="n", xlab=NA, ylab=NA, 
+			xlim=c(full.gene.model@txStart, full.gene.model@txEnd), ylim=c(-1,1))
+		DrawExonStructure(transcript, "black", full.gene.model@txStart)
+		
+		#Mark unique exons on the first transcript
+		if (i == 1){
+			DrawUniqueExons(transcript.list)
+			i <- 0
+		}
 	}
 }   
 
