@@ -5,6 +5,7 @@ from UCSC .tsv file that overlap with each record in the .bed file.
 Usage:
 python refgene-bed-intersect.py <refgene.tsv> <query.bed>
 """
+import sys
 
 #Reference TSV file from UCSC Table Viewer
 reference_bed = open(sys.argv[1],'r') 
