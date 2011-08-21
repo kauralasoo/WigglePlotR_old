@@ -12,7 +12,7 @@ Usage
 -----
 You first have to import a bedfile using the following command:
 
-	bedfile <- read.bedfile("path_to_bed_file.txt")
+	bedfile <- ReadBedFile("path_to_bed_file.txt")
 
 Then you can create a wiggle plot by running:
 
@@ -21,9 +21,9 @@ Then you can create a wiggle plot by running:
 
  * `ids` [character vector] -- IDs of the transcripts. Each ID must be present in the `bedfile`.
  * `bamfiles` [charcter vector] -- Full path to each BAM file containing the aligned reads.
- * `bedfile` [data.frame] -- BED file imported with `read.bedfile()`. Specifies the structure of transcripts.
+ * `bedfile` [data.frame] -- BED file imported with `ReadBedFile()`. Specifies the structure of transcripts.
  * `total.reads` [numeric vector] -- Optional, total number of in each BAM file. When specified, used to normalize the y-axis to RPKM values.
- * `cex` [number] -- Scaling factor for text and axis. Default is `cex = 1`
+ * `cex` [number] -- Scaling factor for text and axes. Default is `cex = 1`
  * `kernel.width` [number] -- Width of the kernel used to smoothen the wiggle plots. Default value is 50, `kernel.width = 1` means no smoothing.
  * `exon.colors` [character vector] -- Color(s) for the reads overlapping exons.
  * `intron.colors` [character vector] -- Color(s) for the reads overlapping introns.
