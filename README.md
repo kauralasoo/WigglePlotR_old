@@ -11,9 +11,11 @@ Download the WigglePlotR.R file, start R and then run:
 Usage
 -----
 To create a plot, execute the following command:
+
 	bedfile <- read.bedfile("path_to_bed_file.txt")
 	WigglePlotR(ids, bamfiles, bedfile, total.reads=NULL, cex = 1, kernel.width = 50,
 		exon.colors="black", intron.color="lightgray", bg.colors="transparent")
+
  * `ids` [character vector] -- IDs of the transcripts. Each ID must be present in the `bedfile`.
 
 Acknowledgements
