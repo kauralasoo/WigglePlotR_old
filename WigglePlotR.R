@@ -1,17 +1,19 @@
 
-WigglePlotR <- function(ids, bamfiles, bedfile, total.reads=NULL, cex = 1, kernel.width = 50,
-		exon.colors="black", intron.color="lightgray", bg.colors="transparent") {
+WigglePlotR <- function(ids, bamfiles, bedfile, total.reads=NULL, cex = 1, kernel.width = 1,
+		exon.colors=rgb(99/255,99/255,99/255), intron.color=rgb(189/255,189/255,189/255), exon.events = FALSE) {
 	# Function for creating "wiggle plots" from BAM alignment files and BED annotation files
 	# Originally written by Adam Gower, modified by Kaur Alasoo.
 	#
 	# INPUT
-	# ids			  A character vector of IDs that correspond to features in the BED file, e.g., "NM_001234"
+	# ids             A character vector of IDs that correspond to features in the BED file, e.g., c("NM_001234")
 	# bamfiles        A character vector of BAM file names, one for each alignment that will be used to generate a wiggle plot
 	# bedfile         The BED file as data.frame that will be used to determine the chromosomal coordinates of the features in 'ids'
+	# cex             How many times character size should be increased? Usful when creating jpg images.
+	# kernel.width    If > 1, kernel smoothing of the read profiles will be used.
 	# total.reads     An integer vector of the total number of reads for each sample; if supplied, used to scale the y-axes of plots
 	# exon.colors     A character vector of color names with which to draw base positions that overlap with exonic regions
 	# intron.color    A color name with which to draw base positions that overlap with intronic regions
-	# bg.colors       A character vector of color names with which to shade the background of each wiggle plot
+	# exon.events     If TRUE, first two transcripts will be colored differently from others and unique exons will be colored red.
 	#
 	# OUTPUT
 	# Draws a single pane for each feature in 'ids', containing a single wiggle plot for each alignment,
@@ -19,6 +21,10 @@ WigglePlotR <- function(ids, bamfiles, bedfile, total.reads=NULL, cex = 1, kerne
 	
 	# Need the Rsamtools package to read BAM files
 	require(Rsamtools)
+	
+	#define colors
+	transcript.colors = c(rgb(55/255,126/255,184/255), rgb(127/255,205/255,187/255)) #Blue and green
+	unique.exon.color = rgb(228/255, 26/255, 28/255) #Red
 	
 	if (!is.null(names(bamfiles))) {
 		# Get the sample names from the names of the filename vector, if available
@@ -39,27 +45,38 @@ WigglePlotR <- function(ids, bamfiles, bedfile, total.reads=NULL, cex = 1, kerne
 	# Create the plot layout
 	n <- length(bamfiles)
 	m <- length(transcript.list)
-	layout(matrix(1:(n+m),n+m,1), heights = c(rep(2,n),rep(1,m)))
+	layout(matrix(1:(n+m),n+m,1), heights = c(rep(4,n),rep(1,m)))
 	par(mar=c(2,50,2,1), bg="transparent")
 	
 	#Draw wiggle plots
 	if (length(exon.colors) == 1) exon.colors <- rep(exon.colors, n)
-	if (length(bg.colors) == 1) bg.colors <- rep(bg.colors, n)
 	DrawWigglePlots(full.gene.model, pileups, total.reads, sample.names,
-			bg.colors, intron.color, exon.colors, cex = cex)
+			intron.color, exon.colors, cex = cex)
 	
 	#Draw exon structures
 	first <- TRUE
+	i = 0
 	for (transcript in transcript.list){
+		i = i + 1
 		#Initialize plot and draw exon structure
-		par(mar=c(0.5,5,0.5,1))
+		par(mar=c(0.5,5,0,1))
 		plot(x=NULL, y=NULL, yaxt="n", xaxt="n", xlab=NA, ylab=NA, 
-				xlim=c(full.gene.model@txStart, full.gene.model@txEnd), ylim=c(-1,1))
-		DrawExonStructure(transcript, "black", full.gene.model, cex)
+				xlim=c(full.gene.model@txStart, full.gene.model@txEnd), 
+				ylim=c(-1,1), frame.plot = FALSE)
+		
+		#Choose the correct color for transcripts
+		if (exon.events){
+			if (i < 3){ color = transcript.colors[1]} else { color = transcript.colors[2] }
+		}
+		else{
+			color = transcript.colors[1]
+		}
+		
+		DrawExonStructure(transcript, color, full.gene.model, cex)
 		
 		#Mark unique exons on the first transcript
 		if (first){
-			DrawUniqueExons(transcript.list)
+			DrawUniqueExons(transcript.list, unique.exon.color, exon.events)
 			first <- FALSE
 		}
 	}
@@ -301,7 +318,7 @@ CreatePileups <- function(full.gene.model, bamfiles, total.reads, kernel.width =
 }
 
 DrawWigglePlots <- function(full.gene.model, pileups, total.reads, sample.names, 
-							bg.colors, intron.color, exon.colors, cex){
+							intron.color, exon.colors, cex){
 	
 	reads = pileups$reads
 	counts = pileups$counts
@@ -324,12 +341,10 @@ DrawWigglePlots <- function(full.gene.model, pileups, total.reads, sample.names,
 	par(mar=c(0.5,5,0.5,1));
 	for (i in 1:n) {
 		# Set up each plot, scaled to the maximum count across all samples
-		#ylab <- sprintf("%s%s", sample.names[i], ifelse(!is.null(total.reads), "\nRPKM", "\nreads"));
 		ylab <- sprintf("%s", sample.names[i]);
 		plot(x=NA, y=NA, xaxt="n", xlab=NA, ylab=ylab, cex.axis = cex, cex.lab = cex, 
-				xlim=c(full.gene.model@txStart, full.gene.model@txEnd), ylim=c(0, max.counts));
-		# Draw a background over just the plotting area
-		rect(xleft=par("usr")[1], xright=par("usr")[2], ybottom=par("usr")[3], ytop=par("usr")[4], col=bg.colors[i]);
+				xlim=c(full.gene.model@txStart, full.gene.model@txEnd),
+				ylim=c(0, max.counts), frame.plot = FALSE);
 		# If there are counts, plot them as individual line segments
 		nonzero <- which(counts[[i]] > 0);
 		first.read <- reads[[i]]$pos[1];
@@ -346,8 +361,9 @@ DrawWigglePlots <- function(full.gene.model, pileups, total.reads, sample.names,
 	}
 }
 
-DrawUniqueExons <- function(transcript.list){
-	#Plot a red rectangle under unique exons of the first transcript.
+DrawUniqueExons <- function(transcript.list, color, exon.events){
+	#Plot a red rectangle under unique exons of the first transcript or draw the unique
+	# exon in red (exon events).
 	#
 	# INPUT
 	# transcript.list	list of all Transcript objects
@@ -378,7 +394,12 @@ DrawUniqueExons <- function(transcript.list){
 	#Mark unique exons with rectangles
 	if (length(exonStarts) > 0){
 		for (i in c(1:length(exonStarts))){
-			rect(xleft=exonStarts[i], xright=exonEnds[i], ybottom=-1, ytop=-0.77, col="red", border = NA);
+			if (exon.events){
+				rect(xleft=exonStarts[i], xright=exonEnds[i], ybottom=-0.6, ytop=1, col=color, border = NA)
+			}
+			else{
+				rect(xleft=exonStarts[i], xright=exonEnds[i], ybottom=-0.8, ytop=-0.6, col=color, border = NA)
+			}
 		}		
 	}	
 }
@@ -394,35 +415,50 @@ DrawExonStructure <- function(transcript, color, full.gene.model, cex){
 	# Add exons from one trancript to the gene structure plot
 	
 	# Draw a line across the transcription unit
-	lines(x=c(transcript@txStart+1, transcript@txEnd), y=c(0,0));
-	# Draw any exons before the coding sequence
-	i <- 1;
-	while (i < transcript@cdsStartExon) {
-		rect(xleft=transcript@exonStarts[i], xright=transcript@exonEnds[i], ybottom=-0.5, ytop=0.5, col=color, border = NA);
-		if (i < transcript@exonCount) i <- i + 1;
-	}
-	# Draw the exon that intersects with the start of the coding sequence
-	rect(xleft=transcript@exonStarts[i], xright=transcript@cdsStart+1, ybottom=-0.5, ytop=0.5, col=color, border = NA);
-	# This line checks to see if the CDS ends before the exon does (in case CDS is in one exon)
-	rect(xleft=transcript@cdsStart+1, xright=min(transcript@cdsEnd, transcript@exonEnds[i]), ybottom=-0.75, ytop=0.75, col=color, border = NA);
-	if (i < transcript@exonCount) i <- i + 1;
-	# Draw the exons that overlap completely with the coding sequence
-	while (i < transcript@cdsEndExon) {
-		rect(xleft=transcript@exonStarts[i], xright=transcript@exonEnds[i], ybottom=-0.75, ytop=0.75, col=color, border = NA);
-		if (i < transcript@exonCount) i <- i + 1;
-	}
-	# Draw the exon that intersects with the end of the coding sequence
-	rect(xleft=max(transcript@cdsStart, transcript@exonStarts[i]), xright=transcript@cdsEnd, ybottom=-0.75, ytop=0.75, col=color, border = NA);
-	rect(xleft=transcript@cdsEnd, xright=transcript@exonEnds[i], ybottom=-0.5, ytop=0.5, col=color, border = NA);
-	if (i < transcript@exonCount) i <- i + 1;
-	# Draw any exons after the coding sequence
-	while (i <= transcript@exonCount) {
-		rect(xleft=transcript@exonStarts[i], xright=transcript@exonEnds[i], ybottom=-0.5, ytop=0.5, col=color, border = NA);
-		i <- i + 1;
+	lines(x=c(transcript@txStart+1, transcript@txEnd), y=c(0.2,0.2), col = color);
+	
+	#Define bottom and top coordinates
+	exon.bottom = -0.4
+	exon.top = 0.8
+	cds.bottom = -0.6
+	cds.top = 1
+	
+	#Iterate over all exons
+	for (i in c(1:transcript@exonCount)){
+		#Draw exons before CDS
+		if (i < transcript@cdsStartExon){
+			rect(xleft=transcript@exonStarts[i], xright=transcript@exonEnds[i], 
+					ybottom = exon.bottom, ytop = exon.top, col=color, border = NA)
+		}
+		#Draw exons that intersect with CDS start
+		else if (i == transcript@cdsStartExon){
+			rect(xleft=transcript@exonStarts[i], xright=transcript@cdsStart+1,
+					ybottom = exon.bottom, ytop = exon.top, col=color, border = NA)
+			rect(xleft=transcript@cdsStart+1, xright=min(transcript@cdsEnd, transcript@exonEnds[i]), 
+					ybottom = cds.bottom, ytop = cds.top, col=color, border = NA)
+		}
+		#Draw exons that overlap with CDS
+		else if (i < transcript@cdsEndExon){
+			rect(xleft=transcript@exonStarts[i], xright=transcript@exonEnds[i], 
+					ybottom = cds.bottom, ytop = cds.top, col=color, border = NA)
+		}
+		#Draw exons that intersect with CDS end
+		else if (i == transcript@cdsEndExon){
+			rect(xleft=max(transcript@cdsStart, transcript@exonStarts[i]), xright=transcript@cdsEnd, 
+					ybottom = cds.bottom, ytop = cds.top, col=color, border = NA)
+			rect(xleft=transcript@cdsEnd, xright=transcript@exonEnds[i], 
+					ybottom= exon.bottom, ytop = exon.top, col=color, border = NA)
+		}
+		#Draw exons after the CDS
+		else{
+			rect(xleft=transcript@exonStarts[i], xright=transcript@exonEnds[i], 
+					ybottom = exon.bottom, ytop = exon.top, col=color, border = NA);
+		}	
 	}
 	
 	#Add name
-	text(x = full.gene.model@txStart, y = -0.9, transcript@name, cex = cex, pos = 4)
+	text(x = full.gene.model@txStart, y = -0.9, transcript@name, cex = cex, pos = 4,
+			col = color)
 	
 	#Calculate the fraction of chevrons needed
 	transcript.length = transcript@txEnd - transcript@txStart
@@ -440,25 +476,30 @@ DrawExonStructure <- function(transcript, color, full.gene.model, cex){
 	# If there are introns, draw chevrons there; if not, draw them in white on the exon
 	if (transcript@exonCount > 1) {
 		x <- x[!mapply(function(starts, ends) any((starts < transcript@exonEnds) & (ends > transcript@exonStarts)), chevron.starts, chevron.ends)];
-		chevron.col <- "black";
+		chevron.col <- color;
 	} else {
 		chevron.col <- "white";
 	}
 	# Draw the chevrons
 	if (length(x) > 0){
-		segments(x0=x, x1=x-width*direction, y0=0, y1=-height, col=chevron.col);
-		segments(x0=x, x1=x-width*direction, y0=0, y1=height, col=chevron.col);
+		segments(x0=x, x1=x-width*direction, y0=+0.2, y1=-height+0.2, col=chevron.col);
+		segments(x0=x, x1=x-width*direction, y0=0+0.2, y1=height+0.2, col=chevron.col);
 	}
 }
 
 Test = function() {
 	#Test that the plot works
 	ids = c('NM_044472','NM_001039802','NM_001791')
+	#ids = c('chr2:204299601:204299957:+@chr2:204302616:204302740:+@chr2:204307752:204310898:+.A',
+	#		'chr2:204299601:204299957:+@chr2:204302616:204302740:+@chr2:204307752:204310898:+.B',
+	#		'NM_006139')
 	bamfiles = c("/Users/alasoo/projects/Tripathi/alignments/ThP/ThP.shrimp.final.sorted.bam", 
 			"/Users/alasoo/projects/Tripathi/alignments/Th0/Th0.shrimp.final.sorted.bam")
 	names(bamfiles) = c("ThP", "Th0")
+	bedfile1 = ReadBedFile("/Users/alasoo/projects/Tripathi/annotations/bed/SE.hg18.bed")
 	bedfile = ReadBedFile("/Users/alasoo/projects/Tripathi/annotations/refGene/refGene.hg18.270711.bed")
-	WigglePlotR(ids, bamfiles, bedfile, cex = 1)
+	bedfile = rbind(bedfile, bedfile1)
+	WigglePlotR(ids, bamfiles, bedfile, cex = 1, kernel.width = 50)
 }
 
 Test()
