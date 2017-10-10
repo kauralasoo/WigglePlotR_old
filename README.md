@@ -1,3 +1,7 @@
+# NOTE: This software is no longer maintained. 
+
+Please use the new version of wiggleplotr available either from [Bioconductor](http://bioconductor.org/packages/release/bioc/html/wiggleplotr.html) or [GitHub](https://github.com/kauralasoo/wiggleplotr).
+
 WigglePlotR
 ===========
 A tool to create wiggle plots from RNA-Seq data.
